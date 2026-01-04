@@ -43,7 +43,7 @@
     }
     .controls {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       gap: 10px;
     }
     button, select, a.download {
@@ -105,6 +105,10 @@
       <div class="controls">
         <button id="take">Take Photo</button>
         <button id="flip">Flip Camera</button>
+        <select id="frameSelect" aria-label="Choose frame">
+          <option value="frame.png" selected>Frame 1</option>
+          <option value="frame2.png">Frame 2</option>
+        </select>
       </div>
 
       <a id="download" class="download" download="framed-photo.png" href="#" style="display:none;">
@@ -119,7 +123,7 @@
 
       <div class="hint">
         Notes: This must run on <b>HTTPS</b> (or <b>localhost</b>) for camera access.
-        Put your transparent-center frame PNG at <b>frame.png</b> next to this file.
+        Put your transparent-center frame PNGs at <b>frame.png</b> and/or <b>frame2.png</b> next to this file.
       </div>
     </div>
 
@@ -130,6 +134,7 @@
   <script>
     const video = document.getElementById('video');
     const frameImg = document.getElementById('frame');
+    const frameSelect = document.getElementById('frameSelect');
     const canvas = document.getElementById('canvas');
     const takeBtn = document.getElementById('take');
     const flipBtn = document.getElementById('flip');
@@ -240,6 +245,13 @@
     }
 
     takeBtn.addEventListener('click', fusePhoto);
+    frameSelect.addEventListener('change', (event) => {
+      const newSrc = event.target.value;
+      frameImg.src = newSrc;
+      // Hide old output until the new frame is used
+      out.style.display = 'none';
+      download.style.display = 'none';
+    });
 
     flipBtn.addEventListener('click', async () => {
       facingMode = (facingMode === 'user') ? 'environment' : 'user';
