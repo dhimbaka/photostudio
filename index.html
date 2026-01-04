@@ -145,6 +145,7 @@
 
     let stream = null;
     let facingMode = 'user'; // 'user' (front) or 'environment' (back)
+    let lastDataUrl = '';
 
     function showError(msg) {
       errorBox.style.display = 'block';
@@ -154,11 +155,16 @@
       errorBox.style.display = 'none';
       errorBox.textContent = '';
     }
+    function hideOutput() {
+      out.style.display = 'none';
+      download.style.display = 'none';
+      lastDataUrl = '';
+    }
 
     async function startCamera() {
       clearError();
       if (stream) {
-        stream.getTracks().forEach(t => t.stop());
+        stream.getTracks().forEach(track => track.stop());
         stream = null;
       }
 
@@ -178,7 +184,7 @@
       } catch (err) {
         console.error(err);
         showError(
-          "Couldn’t access the camera. Make sure you’re on HTTPS (or localhost) and you granted permission."
+          "Couldn't access the camera. Make sure you're on HTTPS (or localhost) and you granted permission."
         );
       }
     }
@@ -187,7 +193,7 @@
     function fusePhoto() {
       clearError();
       if (!video.videoWidth || !video.videoHeight) {
-        showError("Camera not ready yet—try again in a moment.");
+        showError("Camera not ready yet - try again in a moment.");
         return;
       }
 
@@ -213,44 +219,48 @@
       const dy = (outH - dh) / 2;
 
       // If front camera, mirror the captured image to match what user sees
-      // (Most camera previews are mirrored on front camera)
       const shouldMirror = (facingMode === 'user');
 
       ctx.save();
       if (shouldMirror) {
         ctx.translate(outW, 0);
         ctx.scale(-1, 1);
-        ctx.drawImage(video, dx, dy, dw, dh);
-      } else {
-        ctx.drawImage(video, dx, dy, dw, dh);
       }
+      ctx.drawImage(video, dx, dy, dw, dh);
       ctx.restore();
 
       // Draw the frame overlay (must be a PNG with transparency)
-      // Ensure it's loaded
       if (!frameImg.complete) {
-        showError("Frame image still loading—try again.");
+        showError("Frame image still loading - try again.");
         return;
       }
       ctx.drawImage(frameImg, 0, 0, outW, outH);
 
       // Export as PNG
-      const dataUrl = canvas.toDataURL('image/png');
+      lastDataUrl = canvas.toDataURL('image/png');
 
-      preview.src = dataUrl;
+      preview.src = lastDataUrl;
       out.style.display = 'block';
 
-      download.href = dataUrl;
+      download.href = lastDataUrl;
+      download.download = `framed-photo-${Date.now()}.png`;
       download.style.display = 'block';
+      download.removeAttribute('aria-disabled');
     }
 
     takeBtn.addEventListener('click', fusePhoto);
+    download.addEventListener('click', (event) => {
+      if (!lastDataUrl) {
+        event.preventDefault();
+        showError('Take a photo before downloading.');
+      }
+    });
+
     frameSelect.addEventListener('change', (event) => {
       const newSrc = event.target.value;
       frameImg.src = newSrc;
       // Hide old output until the new frame is used
-      out.style.display = 'none';
-      download.style.display = 'none';
+      hideOutput();
     });
 
     flipBtn.addEventListener('click', async () => {
@@ -261,7 +271,7 @@
     // Kick off
     (async function init() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showError("Your browser doesn’t support camera access (getUserMedia). Try Chrome/Safari on mobile.");
+        showError("Your browser doesn't support camera access (getUserMedia). Try Chrome/Safari on mobile.");
         return;
       }
       await startCamera();
