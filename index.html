@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Camera + Vintage Frame</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      background: #111;
+    }
+    .app {
+      width: min(92vw, 520px);
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+    }
+    .stage {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 3 / 4; /* change if you want a different shape */
+      border-radius: 18px;
+      overflow: hidden;
+      background: #000;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    video, .frame {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    /* Your frame PNG should have transparent center */
+    .frame {
+      pointer-events: none;
+      image-rendering: auto;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    button, select, a.download {
+      padding: 12px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.15);
+      background: rgba(255,255,255,.08);
+      color: #fff;
+      font-weight: 650;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      user-select: none;
+    }
+    button:active { transform: translateY(1px); }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    .out {
+      display: none;
+      width: 100%;
+      border-radius: 18px;
+      overflow: hidden;
+      background: #000;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    .out img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .hint {
+      opacity: .85;
+      font-size: 13px;
+      line-height: 1.35;
+      color: rgba(255,255,255,.85);
+    }
+    .error {
+      display: none;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255, 80, 80, .18);
+      border: 1px solid rgba(255, 80, 80, .35);
+      color: rgba(255,255,255,.95);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="stage" id="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <img id="frame" class="frame" src="frame.png" alt="Frame overlay" />
+    </div>
+
+    <div class="row">
+      <div class="controls">
+        <button id="take">Take Photo</button>
+        <button id="flip">Flip Camera</button>
+      </div>
+
+      <a id="download" class="download" download="framed-photo.png" href="#" style="display:none;">
+        Download Fused Photo
+      </a>
+
+      <div class="out" id="out">
+        <img id="preview" alt="Fused output preview" />
+      </div>
+
+      <div class="error" id="error"></div>
+
+      <div class="hint">
+        Notes: This must run on <b>HTTPS</b> (or <b>localhost</b>) for camera access.
+        Put your transparent-center frame PNG at <b>frame.png</b> next to this file.
+      </div>
+    </div>
+
+    <!-- Offscreen canvas for fusion -->
+    <canvas id="canvas" style="display:none;"></canvas>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const frameImg = document.getElementById('frame');
+    const canvas = document.getElementById('canvas');
+    const takeBtn = document.getElementById('take');
+    const flipBtn = document.getElementById('flip');
+    const out = document.getElementById('out');
+    const preview = document.getElementById('preview');
+    const download = document.getElementById('download');
+    const errorBox = document.getElementById('error');
+
+    let stream = null;
+    let facingMode = 'user'; // 'user' (front) or 'environment' (back)
+
+    function showError(msg) {
+      errorBox.style.display = 'block';
+      errorBox.textContent = msg;
+    }
+    function clearError() {
+      errorBox.style.display = 'none';
+      errorBox.textContent = '';
+    }
+
+    async function startCamera() {
+      clearError();
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: facingMode },
+            // You can hint a preferred resolution; browser may ignore.
+            width: { ideal: 1280 },
+            height: { ideal: 1706 }
+          },
+          audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+      } catch (err) {
+        console.error(err);
+        showError(
+          "Couldn’t access the camera. Make sure you’re on HTTPS (or localhost) and you granted permission."
+        );
+      }
+    }
+
+    // Fuse: draw video + frame into a single image
+    function fusePhoto() {
+      clearError();
+      if (!video.videoWidth || !video.videoHeight) {
+        showError("Camera not ready yet—try again in a moment.");
+        return;
+      }
+
+      // Match canvas to the on-screen stage size for predictable framing
+      const stage = document.getElementById('stage');
+      const rect = stage.getBoundingClientRect();
+      const outW = Math.round(rect.width * devicePixelRatio);
+      const outH = Math.round(rect.height * devicePixelRatio);
+
+      canvas.width = outW;
+      canvas.height = outH;
+
+      const ctx = canvas.getContext('2d');
+
+      // Draw video using "cover" behavior to match CSS object-fit: cover
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+
+      const scale = Math.max(outW / vw, outH / vh);
+      const dw = vw * scale;
+      const dh = vh * scale;
+      const dx = (outW - dw) / 2;
+      const dy = (outH - dh) / 2;
+
+      // If front camera, mirror the captured image to match what user sees
+      // (Most camera previews are mirrored on front camera)
+      const shouldMirror = (facingMode === 'user');
+
+      ctx.save();
+      if (shouldMirror) {
+        ctx.translate(outW, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, dx, dy, dw, dh);
+      } else {
+        ctx.drawImage(video, dx, dy, dw, dh);
+      }
+      ctx.restore();
+
+      // Draw the frame overlay (must be a PNG with transparency)
+      // Ensure it's loaded
+      if (!frameImg.complete) {
+        showError("Frame image still loading—try again.");
+        return;
+      }
+      ctx.drawImage(frameImg, 0, 0, outW, outH);
+
+      // Export as PNG
+      const dataUrl = canvas.toDataURL('image/png');
+
+      preview.src = dataUrl;
+      out.style.display = 'block';
+
+      download.href = dataUrl;
+      download.style.display = 'block';
+    }
+
+    takeBtn.addEventListener('click', fusePhoto);
+
+    flipBtn.addEventListener('click', async () => {
+      facingMode = (facingMode === 'user') ? 'environment' : 'user';
+      await startCamera();
+    });
+
+    // Kick off
+    (async function init() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showError("Your browser doesn’t support camera access (getUserMedia). Try Chrome/Safari on mobile.");
+        return;
+      }
+      await startCamera();
+    })();
+  </script>
+</body>
+</html>
